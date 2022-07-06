@@ -123,6 +123,11 @@ provision:
     EOF
     sudo systemctl daemon-reload  
     systemctl enable --now nomad consul
+
+    wget https://github.com/fermyon/spin/releases/download/v0.3.0/spin-v0.3.0-linux-amd64.tar.gz
+    tar xfv spin-v0.3.0-linux-amd64.tar.gz
+    mv spin /usr/local/bin/spin
+
 - mode: user
   script: |
     #!/bin/sh
