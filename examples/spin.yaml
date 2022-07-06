@@ -1,0 +1,148 @@
+# Deploy nomad with containerd
+# $ limactl start ./nomad.yaml
+# $ limactl shell nomad nomad
+#
+# See <http://localhost:4646>
+#
+# More examples can be found at:
+# https://github.com/Roblox/nomad-driver-containerd/tree/master/example
+
+# This example requires Lima v0.7.0 or later.
+
+# Image is set to focal (20.04 LTS) for long-term stability
+# TODO: Upgrade to 22.04 LTS when nomad-driver-containerd supports cgroup v2: https://github.com/Roblox/nomad-driver-containerd/pull/133
+images:
+# Try to use release-yyyyMMdd image if available. Note that release-yyyyMMdd will be removed after several months.
+- location: "https://cloud-images.ubuntu.com/releases/20.04/release-20220302/ubuntu-20.04-server-cloudimg-amd64.img"
+  arch: "x86_64"
+  digest: "sha256:243157ea0390890d6e60ce5e08e0249b16e23b6b313b63aed50f39f92b020afe"
+- location: "https://cloud-images.ubuntu.com/releases/20.04/release-20220302/ubuntu-20.04-server-cloudimg-arm64.img"
+  arch: "aarch64"
+  digest: "sha256:fb2b4efdbf0011bd2a9fd49e9d31efdd252966c889f07b5d246351ec5734a329"
+# Fallback to the latest release image.
+# Hint: run `limactl prune` to invalidate the cache
+- location: "https://cloud-images.ubuntu.com/releases/20.04/release/ubuntu-20.04-server-cloudimg-amd64.img"
+  arch: "x86_64"
+- location: "https://cloud-images.ubuntu.com/releases/20.04/release/ubuntu-20.04-server-cloudimg-arm64.img"
+  arch: "aarch64"
+
+# Mounts are disabled in this example, but can be enabled optionally.
+mounts: []
+containerd:
+  system: false
+  user: false
+# See https://learn.hashicorp.com/tutorials/nomad/get-started-install
+provision:
+- mode: system
+  script: |
+    #!/bin/sh
+    command -v nomad >/dev/null 2>&1 && exit 0
+    curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
+    echo "deb https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+    apt-get update
+    apt-get install -y nomad consul golang-cfssl
+    mkdir -p /etc/nomad.d/
+    cat <<EOF | sudo tee -a /etc/nomad.d/nomad.hcl
+
+    log_level            = "INFO"
+    disable_update_check = true
+
+    # these settings allow Nomad to automatically find its peers through Consul
+    consul {
+      server_service_name = "nomad"
+      server_auto_join    = true
+      client_service_name = "nomad-client"
+      client_auto_join    = true
+      auto_advertise      = true
+    }
+
+    server {
+      enabled          = true
+      bootstrap_expect = 1
+    }
+
+    client {
+      options = {
+        "driver.blacklist" = "java"
+      }
+    }    
+    
+    EOF
+    
+    sudo tee -a /etc/systemd/system/nomad.service <<'EOF'
+    [Unit]
+    Description="HashiCorp Nomad"
+    Documentation=https://nomadproject.io/docs/
+    Wants=network-online.target
+    After=network-online.target
+    StartLimitIntervalSec=10
+
+    [Service]
+    ExecReload=/bin/kill -HUP $MAINPID
+    ExecStart=/usr/bin/nomad agent -dev -config /etc/nomad.d
+    KillMode=process
+    KillSignal=SIGINT
+    LimitNOFILE=infinity
+    LimitNPROC=infinity
+    Restart=on-failure
+    RestartSec=2
+    StartLimitBurst=3
+    TasksMax=infinity
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+    
+        
+    mkdir /opt/consul
+    chown -R consul:consul /opt/consul
+    mkdir -p /etc/consul.d/
+    cat <<EOF | sudo tee -a /etc/consul.d/consul.hcl
+    client_addr = "0.0.0.0"
+    ui          = true
+    server      = true
+    EOF
+    
+    sudo tee -a /etc/systemd/system/consul.service <<'EOF'
+    [Unit]
+    Description="HashiCorp Consul"
+    Documentation=https://www.consul.io/
+    Requires=network-online.target
+    After=network-online.target
+    [Service]
+    User=consul
+    Group=consul
+    ExecStart=/usr/bin/consul agent -dev -config-dir=/etc/consul.d/
+    ExecReload=/bin/kill --signal HUP $MAINPID
+    KillMode=process
+    KillSignal=SIGTERM
+    Restart=on-failure
+    LimitNOFILE=65536
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+    sudo systemctl daemon-reload  
+    systemctl enable --now nomad consul
+- mode: user
+  script: |
+    #!/bin/sh
+    nomad -autocomplete-install
+    while ! nomad server members 2>/dev/null | grep -q alive; do
+      sleep 2
+    done
+    wget https://raw.githubusercontent.com/fermyon/installer/main/local/job/traefik.nomad
+    wget https://raw.githubusercontent.com/fermyon/installer/main/local/job/bindle.nomad
+    wget https://raw.githubusercontent.com/fermyon/installer/main/local/job/hippo.nomad
+    nomad run traefik.nomad
+    nomad run -var="os=linux" -var="arch=amd64" bindle.nomad
+    nomad run -var="os=linux" hippo.nomad
+
+probes:
+- script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    if ! timeout 30s bash -c "until command -v nomad >/dev/null 2>&1; do sleep 3; done"; then
+      echo >&2 "nomad is not installed yet"
+      exit 1
+    fi
+  hint: See "/var/log/cloud-init-output.log". in the guest
