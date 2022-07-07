@@ -122,10 +122,6 @@ provision:
     tar xfv spin-v0.3.0-linux-amd64.tar.gz
     mv spin /usr/local/bin/spin
 
-- mode: user
-  script: |
-    #!/bin/sh
-    nomad -autocomplete-install
     while ! nomad server members 2>/dev/null | grep -q alive; do
       sleep 2
     done
@@ -135,6 +131,12 @@ provision:
     nomad run traefik.nomad
     nomad run -var="os=linux" -var="arch=amd64" bindle.nomad
     nomad run -var="os=linux" hippo.nomad
+
+
+- mode: user
+  script: |
+    #!/bin/sh
+    nomad -autocomplete-install
 
 probes:
 - script: |
