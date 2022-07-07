@@ -18,6 +18,8 @@ VERSION_TRIMMED := $(VERSION:v%=%)
 
 GO_BUILD := $(GO) build -ldflags="-s -w -X $(PACKAGE)/pkg/version.Version=$(VERSION)"
 
+
+
 .PHONY: all
 all: binaries
 
@@ -26,6 +28,7 @@ exe: _output/bin/limactl$(exe)
 .PHONY: binaries
 binaries: clean \
 	_output/bin/lima \
+	_output/bin/fermyon$(exe) \
 	_output/bin/limactl$(exe) \
 	_output/bin/nerdctl.lima \
 	_output/bin/docker.lima \
@@ -60,6 +63,12 @@ _output/bin/docker.lima: ./cmd/docker.lima
 _output/bin/podman.lima: ./cmd/podman.lima
 	@mkdir -p _output/bin
 	cp -a $^ $@
+
+.PHONY: _output/bin/fermyon$(exe)
+_output/bin/fermyon$(exe):
+	# The hostagent must be compiled with CGO_ENABLED=1 so that net.LookupIP() in the DNS server
+	# calls the native resolver library and not the simplistic version in the Go library.
+	CGO_ENABLED=1 $(GO_BUILD) -o $@ ./cmd/fermyon
 
 .PHONY: _output/bin/limactl$(exe)
 _output/bin/limactl$(exe):
